@@ -180,8 +180,8 @@ void GameButton::Draw(UIContext &dc) {
 	u32 color = 0, shadowColor = 0;
 	using namespace UI;
 
-	if (ginfo->iconTexture) {
-		texture = ginfo->iconTexture->GetTexture();
+	if (ginfo->icon.texture) {
+		texture = ginfo->icon.texture->GetTexture();
 	}
 
 	int x = bounds_.x;
@@ -207,8 +207,8 @@ void GameButton::Draw(UIContext &dc) {
 	}
 
 	if (texture) {
-		color = whiteAlpha(ease((time_now_d() - ginfo->timeIconWasLoaded) * 2));
-		shadowColor = blackAlpha(ease((time_now_d() - ginfo->timeIconWasLoaded) * 2));
+		color = whiteAlpha(ease((time_now_d() - ginfo->icon.timeLoaded) * 2));
+		shadowColor = blackAlpha(ease((time_now_d() - ginfo->icon.timeLoaded) * 2));
 		float tw = texture->Width();
 		float th = texture->Height();
 
@@ -837,11 +837,11 @@ void MainScreen::CreateViews() {
 	sprintf(versionString, "%s", PPSSPP_GIT_VERSION);
 	rightColumnItems->SetSpacing(0.0f);
 	LinearLayout *logos = new LinearLayout(ORIENT_HORIZONTAL);
-#ifdef GOLD
-	logos->Add(new ImageView(I_ICONGOLD, IS_DEFAULT, new AnchorLayoutParams(64, 64, 10, 10, NONE, NONE, false)));
-#else
-	logos->Add(new ImageView(I_ICON, IS_DEFAULT, new AnchorLayoutParams(64, 64, 10, 10, NONE, NONE, false)));
-#endif
+	if (System_GetPropertyInt(SYSPROP_APP_GOLD)) {
+		logos->Add(new ImageView(I_ICONGOLD, IS_DEFAULT, new AnchorLayoutParams(64, 64, 10, 10, NONE, NONE, false)));
+	} else {
+		logos->Add(new ImageView(I_ICON, IS_DEFAULT, new AnchorLayoutParams(64, 64, 10, 10, NONE, NONE, false)));
+	}
 	logos->Add(new ImageView(I_LOGO, IS_DEFAULT, new LinearLayoutParams(Margins(-12, 0, 0, 0))));
 	rightColumnItems->Add(logos);
 	TextView *ver = rightColumnItems->Add(new TextView(versionString, new LinearLayoutParams(Margins(70, -6, 0, 0))));
@@ -853,11 +853,11 @@ void MainScreen::CreateViews() {
 	rightColumnItems->Add(new Choice(mm->T("Game Settings", "Settings")))->OnClick.Handle(this, &MainScreen::OnGameSettings);
 	rightColumnItems->Add(new Choice(mm->T("Credits")))->OnClick.Handle(this, &MainScreen::OnCredits);
 	rightColumnItems->Add(new Choice(mm->T("www.ppsspp.org")))->OnClick.Handle(this, &MainScreen::OnPPSSPPOrg);
-#ifndef GOLD
-	Choice *gold = rightColumnItems->Add(new Choice(mm->T("Support PPSSPP")));
-	gold->OnClick.Handle(this, &MainScreen::OnSupport);
-	gold->SetIcon(I_ICONGOLD);
-#endif
+	if (!System_GetPropertyInt(SYSPROP_APP_GOLD)) {
+		Choice *gold = rightColumnItems->Add(new Choice(mm->T("Support PPSSPP")));
+		gold->OnClick.Handle(this, &MainScreen::OnSupport);
+		gold->SetIcon(I_ICONGOLD);
+	}
 
 #if !PPSSPP_PLATFORM(UWP)
 	// Having an exit button is against UWP guidelines.
@@ -910,13 +910,13 @@ UI::EventReturn MainScreen::OnAllowStorage(UI::EventParams &e) {
 }
 
 UI::EventReturn MainScreen::OnDownloadUpgrade(UI::EventParams &e) {
-#ifdef __ANDROID__
+#if PPSSPP_PLATFORM(ANDROID)
 	// Go to app store
-#ifdef GOLD
-	LaunchBrowser("market://details?id=org.ppsspp.ppssppgold");
-#else
-	LaunchBrowser("market://details?id=org.ppsspp.ppsspp");
-#endif
+	if (System_GetPropertyInt(SYSPROP_APP_GOLD)) {
+		LaunchBrowser("market://details?id=org.ppsspp.ppssppgold");
+	} else {
+		LaunchBrowser("market://details?id=org.ppsspp.ppsspp");
+	}
 #else
 	// Go directly to ppsspp.org and let the user sort it out
 	LaunchBrowser("http://www.ppsspp.org/downloads.html");
@@ -977,15 +977,13 @@ UI::EventReturn MainScreen::OnLoadFile(UI::EventParams &e) {
 		g_Config.Save();
 		screenManager()->switchScreen(new EmuScreen(fileName.toStdString()));
 	}
-#elif PPSSPP_PLATFORM(UWP)
-	System_SendMessage("browse_file", "");
-#elif defined(USING_WIN_UI)
-	MainWindow::BrowseAndBoot("");
 #endif
+
+	if (System_GetPropertyInt(SYSPROP_HAS_FILE_BROWSER)) {
+		System_SendMessage("browse_file", "");
+	}
 	return UI::EVENT_DONE;
 }
-
-extern void DrawBackground(UIContext &dc, float alpha);
 
 void MainScreen::DrawBackground(UIContext &dc) {
 	UIScreenWithBackground::DrawBackground(dc);
@@ -1017,17 +1015,17 @@ bool MainScreen::DrawBackgroundFor(UIContext &dc, const std::string &gamePath, f
 		dc.RebindTexture();
 
 		// Let's not bother if there's no picture.
-		if (!ginfo || (!ginfo->pic1Texture && !ginfo->pic0Texture)) {
+		if (!ginfo || (!ginfo->pic1.texture && !ginfo->pic0.texture)) {
 			return false;
 		}
 	} else {
 		return false;
 	}
 
-	if (ginfo->pic1Texture) {
-		dc.GetDrawContext()->BindTexture(0, ginfo->pic1Texture->GetTexture());
-	} else if (ginfo->pic0Texture) {
-		dc.GetDrawContext()->BindTexture(0, ginfo->pic0Texture->GetTexture());
+	if (ginfo->pic1.texture) {
+		dc.GetDrawContext()->BindTexture(0, ginfo->pic1.texture->GetTexture());
+	} else if (ginfo->pic0.texture) {
+		dc.GetDrawContext()->BindTexture(0, ginfo->pic0.texture->GetTexture());
 	}
 
 	uint32_t color = whiteAlpha(ease(progress)) & 0xFFc0c0c0;

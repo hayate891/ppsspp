@@ -23,6 +23,7 @@
 #include "gfx_es2/gpu_features.h"
 
 #include "i18n/i18n.h"
+#include "Common/ColorConv.h"
 #include "Common/Common.h"
 #include "Core/Config.h"
 #include "Core/CoreParameter.h"
@@ -334,7 +335,7 @@ VirtualFramebuffer *FramebufferManagerCommon::DoSetRenderFrameBuffer(const Frame
 			// Keep track, but this isn't really used.
 			vfb->z_stride = params.z_stride;
 			// Heuristic: In throughmode, a higher height could be used.  Let's avoid shrinking the buffer.
-			if (params.isModeThrough && (int)vfb->width < params.fb_stride) {
+			if (params.isModeThrough && (int)vfb->width <= params.fb_stride) {
 				vfb->width = std::max((int)vfb->width, drawing_width);
 				vfb->height = std::max((int)vfb->height, drawing_height);
 			} else {
@@ -564,6 +565,7 @@ void FramebufferManagerCommon::NotifyRenderFramebufferUpdated(VirtualFramebuffer
 void FramebufferManagerCommon::NotifyRenderFramebufferSwitched(VirtualFramebuffer *prevVfb, VirtualFramebuffer *vfb, bool isClearingDepth) {
 	if (ShouldDownloadFramebuffer(vfb) && !vfb->memoryUpdated) {
 		ReadFramebufferToMemory(vfb, true, 0, 0, vfb->width, vfb->height);
+		vfb->usageFlags = (vfb->usageFlags | FB_USAGE_DOWNLOAD) & ~FB_USAGE_DOWNLOAD_CLEAR;
 	} else {
 		DownloadFramebufferOnSwitch(prevVfb);
 	}
@@ -718,6 +720,32 @@ void FramebufferManagerCommon::DrawPixels(VirtualFramebuffer *vfb, int dstX, int
 	DrawActiveTexture(dstX, dstY, width, height, vfb->bufferWidth, vfb->bufferHeight, u0, v0, u1, v1, ROTATION_LOCKED_HORIZONTAL, linearFilter);
 }
 
+void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer *dst, VirtualFramebuffer *src, int flags) {
+	int x = 0;
+	int y = 0;
+	int w = src->drawnWidth;
+	int h = src->drawnHeight;
+
+	// If max is not > min, we probably could not detect it.  Skip.
+	// See the vertex decoder, where this is updated.
+	if ((flags & BINDFBCOLOR_MAY_COPY_WITH_UV) == BINDFBCOLOR_MAY_COPY_WITH_UV && gstate_c.vertBounds.maxU > gstate_c.vertBounds.minU) {
+		x = std::max(gstate_c.vertBounds.minU, (u16)0);
+		y = std::max(gstate_c.vertBounds.minV, (u16)0);
+		w = std::min(gstate_c.vertBounds.maxU, src->drawnWidth) - x;
+		h = std::min(gstate_c.vertBounds.maxV, src->drawnHeight) - y;
+
+		// If we bound a framebuffer, apply the byte offset as pixels to the copy too.
+		if (flags & BINDFBCOLOR_APPLY_TEX_OFFSET) {
+			x += gstate_c.curTextureXOffset;
+			y += gstate_c.curTextureYOffset;
+		}
+	}
+
+	if (x < src->drawnWidth && y < src->drawnHeight && w > 0 && h > 0) {
+		BlitFramebuffer(dst, x, y, src, x, y, w, h, 0);
+	}
+}
+
 void FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, GEBufferFormat srcPixelFormat, int srcStride, bool applyPostShader) {
 	textureCache_->ForgetLastTexture();
 	shaderManager_->DirtyLastShader();
@@ -770,12 +798,13 @@ void FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, GEBu
 }
 
 void FramebufferManagerCommon::DownloadFramebufferOnSwitch(VirtualFramebuffer *vfb) {
-	if (vfb && vfb->safeWidth > 0 && vfb->safeHeight > 0 && !vfb->firstFrameSaved) {
+	if (vfb && vfb->safeWidth > 0 && vfb->safeHeight > 0 && !vfb->firstFrameSaved && !vfb->memoryUpdated) {
 		// Some games will draw to some memory once, and use it as a render-to-texture later.
-		// To support this, we save the first frame to memory when we have a save w/h.
+		// To support this, we save the first frame to memory when we have a safe w/h.
 		// Saving each frame would be slow.
 		if (!g_Config.bDisableSlowFramebufEffects) {
 			ReadFramebufferToMemory(vfb, true, 0, 0, vfb->safeWidth, vfb->safeHeight);
+			vfb->usageFlags = (vfb->usageFlags | FB_USAGE_DOWNLOAD) & ~FB_USAGE_DOWNLOAD_CLEAR;
 			vfb->firstFrameSaved = true;
 			vfb->safeWidth = 0;
 			vfb->safeHeight = 0;
@@ -1021,6 +1050,7 @@ void FramebufferManagerCommon::DecimateFBOs() {
 		if (ShouldDownloadFramebuffer(vfb) && age == 0 && !vfb->memoryUpdated) {
 			bool sync = gl_extensions.IsGLES;
 			ReadFramebufferToMemory(vfb, sync, 0, 0, vfb->width, vfb->height);
+			vfb->usageFlags = (vfb->usageFlags | FB_USAGE_DOWNLOAD) & ~FB_USAGE_DOWNLOAD_CLEAR;
 		}
 
 		// Let's also "decimate" the usageFlags.
@@ -1239,6 +1269,7 @@ bool FramebufferManagerCommon::NotifyFramebufferCopy(u32 src, u32 dst, int size,
 			WARN_LOG_REPORT_ONCE(btdcpyheight, G3D, "Memcpy fbo download %08x -> %08x skipped, %d+%d is taller than %d", src, dst, srcY, srcH, srcBuffer->bufferHeight);
 		} else if (g_Config.bBlockTransferGPU && !srcBuffer->memoryUpdated) {
 			ReadFramebufferToMemory(srcBuffer, true, 0, srcY, srcBuffer->width, srcH);
+			srcBuffer->usageFlags = (srcBuffer->usageFlags | FB_USAGE_DOWNLOAD) & ~FB_USAGE_DOWNLOAD_CLEAR;
 		}
 		return false;
 	} else {
@@ -1393,6 +1424,84 @@ VirtualFramebuffer *FramebufferManagerCommon::FindDownloadTempBuffer(VirtualFram
 	return nvfb;
 }
 
+void FramebufferManagerCommon::ApplyClearToMemory(int x1, int y1, int x2, int y2, u32 clearColor) {
+	if (currentRenderVfb_) {
+		if ((currentRenderVfb_->usageFlags & FB_USAGE_DOWNLOAD_CLEAR) != 0) {
+			// Already zeroed in memory.
+			return;
+		}
+	}
+
+	u8 *addr = Memory::GetPointer(gstate.getFrameBufAddress());
+	const int bpp = gstate.FrameBufFormat() == GE_FORMAT_8888 ? 4 : 2;
+
+	u32 clearBits = clearColor;
+	if (bpp == 2) {
+		u16 clear16 = 0;
+		switch (gstate.FrameBufFormat()) {
+		case GE_FORMAT_565: ConvertRGBA8888ToRGB565(&clear16, &clearColor, 1); break;
+		case GE_FORMAT_5551: ConvertRGBA8888ToRGBA5551(&clear16, &clearColor, 1); break;
+		case GE_FORMAT_4444: ConvertRGBA8888ToRGBA4444(&clear16, &clearColor, 1); break;
+		default: _dbg_assert_(G3D, 0); break;
+		}
+		clearBits = clear16 | (clear16 << 16);
+	}
+
+	const bool singleByteClear = (clearBits >> 16) == (clearBits & 0xFFFF) && (clearBits >> 24) == (clearBits & 0xFF);
+	const int stride = gstate.FrameBufStride();
+	const int width = x2 - x1;
+
+	// Can use memset for simple cases. Often alpha is different and gums up the works.
+	if (singleByteClear) {
+		const int byteStride = stride * bpp;
+		const int byteWidth = width * bpp;
+		addr += x1 * bpp;
+		for (int y = y1; y < y2; ++y) {
+			memset(addr + y * byteStride, clearBits, byteWidth);
+		}
+	} else {
+		// This will most often be true - rarely is the width not aligned.
+		// TODO: We should really use non-temporal stores here to avoid the cache,
+		// as it's unlikely that these bytes will be read.
+		if ((width & 3) == 0 && (x1 & 3) == 0) {
+			u64 val64 = clearBits | ((u64)clearBits << 32);
+			int xstride = 8 / bpp;
+
+			u64 *addr64 = (u64 *)addr;
+			const int stride64 = stride / xstride;
+			const int x1_64 = x1 / xstride;
+			const int x2_64 = x2 / xstride;
+			for (int y = y1; y < y2; ++y) {
+				for (int x = x1_64; x < x2_64; ++x) {
+					addr64[y * stride64 + x] = val64;
+				}
+			}
+		} else if (bpp == 4) {
+			u32 *addr32 = (u32 *)addr;
+			for (int y = y1; y < y2; ++y) {
+				for (int x = x1; x < x2; ++x) {
+					addr32[y * stride + x] = clearBits;
+				}
+			}
+		} else if (bpp == 2) {
+			u16 *addr16 = (u16 *)addr;
+			for (int y = y1; y < y2; ++y) {
+				for (int x = x1; x < x2; ++x) {
+					addr16[y * stride + x] = (u16)clearBits;
+				}
+			}
+		}
+	}
+
+	if (currentRenderVfb_) {
+		// The current content is in memory now, so update the flag.
+		if (x1 == 0 && y1 == 0 && x2 >= currentRenderVfb_->width && y2 >= currentRenderVfb_->height) {
+			currentRenderVfb_->usageFlags |= FB_USAGE_DOWNLOAD_CLEAR;
+			currentRenderVfb_->memoryUpdated = true;
+		}
+	}
+}
+
 void FramebufferManagerCommon::OptimizeDownloadRange(VirtualFramebuffer * vfb, int & x, int & y, int & w, int & h) {
 	if (gameUsesSequentialCopies_) {
 		// Ignore the x/y/etc., read the entire thing.
@@ -1404,6 +1513,7 @@ void FramebufferManagerCommon::OptimizeDownloadRange(VirtualFramebuffer * vfb, i
 	if (x == 0 && y == 0 && w == vfb->width && h == vfb->height) {
 		// Mark it as fully downloaded until next render to it.
 		vfb->memoryUpdated = true;
+		vfb->usageFlags |= FB_USAGE_DOWNLOAD;
 	} else {
 		// Let's try to set the flag eventually, if the game copies a lot.
 		// Some games copy subranges very frequently.
@@ -1485,6 +1595,7 @@ bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dst
 				if (tooTall)
 					WARN_LOG_ONCE(btdheight, G3D, "Block transfer download %08x -> %08x dangerous, %d+%d is taller than %d", srcBasePtr, dstBasePtr, srcY, srcHeight, srcBuffer->bufferHeight);
 				ReadFramebufferToMemory(srcBuffer, true, static_cast<int>(srcX * srcXFactor), srcY, static_cast<int>(srcWidth * srcXFactor), srcHeight);
+				srcBuffer->usageFlags = (srcBuffer->usageFlags | FB_USAGE_DOWNLOAD) & ~FB_USAGE_DOWNLOAD_CLEAR;
 			}
 		}
 		return false;  // Let the bit copy happen
@@ -1532,6 +1643,10 @@ void FramebufferManagerCommon::NotifyBlockTransferAfter(u32 dstBasePtr, int dstS
 					// The buffer isn't big enough, and we have a clear hint of size.  Resize.
 					// This happens in Valkyrie Profile when uploading video at the ending.
 					ResizeFramebufFBO(dstBuffer, dstWidth, dstHeight, false, true);
+					// Make sure we don't flop back and forth.
+					dstBuffer->newWidth = std::max(dstWidth, (int)dstBuffer->width);
+					dstBuffer->newHeight = std::max(dstHeight, (int)dstBuffer->height);
+					dstBuffer->lastFrameNewSize = gpuStats.numFlips;
 				}
 				DrawPixels(dstBuffer, static_cast<int>(dstX * dstXFactor), dstY, srcBase, dstBuffer->format, static_cast<int>(srcStride * dstXFactor), static_cast<int>(dstWidth * dstXFactor), dstHeight);
 				SetColorUpdated(dstBuffer, skipDrawReason);

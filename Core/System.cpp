@@ -370,11 +370,14 @@ void Core_UpdateState(CoreState newState) {
 	Core_UpdateSingleStep();
 }
 
-static void Core_UpdateCollectDebugStats(bool flag) {
+static void Core_UpdateDebugStats(bool flag) {
 	if (coreCollectDebugStats != flag) {
 		coreCollectDebugStats = flag;
 		mipsr4k.ClearJitCache();
 	}
+
+	kernelStats.ResetFrame();
+	gpuStats.ResetFrame();
 }
 
 void System_Wake() {
@@ -385,28 +388,22 @@ void System_Wake() {
 	}
 }
 
+// Ugly!
 static bool pspIsInited = false;
 static bool pspIsIniting = false;
 static bool pspIsQuiting = false;
-// Ugly!
 
 bool PSP_InitStart(const CoreParameter &coreParam, std::string *error_string) {
 	if (pspIsIniting || pspIsQuiting) {
 		return false;
 	}
 
-#ifdef GOLD
-	const char *gold = " Gold";
-#else
-	const char *gold = "";
-#endif
-
 #if defined(_WIN32) && defined(_M_X64)
-	INFO_LOG(BOOT, "PPSSPP%s %s Windows 64 bit", gold, PPSSPP_GIT_VERSION);
+	INFO_LOG(BOOT, "PPSSPP %s Windows 64 bit", PPSSPP_GIT_VERSION);
 #elif defined(_WIN32) && !defined(_M_X64)
-	INFO_LOG(BOOT, "PPSSPP%s %s Windows 32 bit", gold, PPSSPP_GIT_VERSION);
+	INFO_LOG(BOOT, "PPSSPP %s Windows 32 bit", PPSSPP_GIT_VERSION);
 #else
-	INFO_LOG(BOOT, "PPSSPP%s %s", gold, PPSSPP_GIT_VERSION);
+	INFO_LOG(BOOT, "PPSSPP %s", PPSSPP_GIT_VERSION);
 #endif
 
 	GraphicsContext *temp = coreParameter.graphicsContext;
@@ -527,7 +524,7 @@ void PSP_EndHostFrame() {
 }
 
 void PSP_RunLoopUntil(u64 globalticks) {
-	Core_UpdateCollectDebugStats(g_Config.bShowDebugStats || g_Config.bLogFrameDrops);
+	Core_UpdateDebugStats(g_Config.bShowDebugStats || g_Config.bLogFrameDrops);
 
 	SaveState::Process();
 	if (coreState == CORE_POWERDOWN || coreState == CORE_ERROR) {
@@ -637,7 +634,7 @@ void InitSysDirectories() {
 	const std::string path = File::GetExeDirectory();
 
 	// Mount a filesystem
-	g_Config.flash0Directory = path + "flash0/";
+	g_Config.flash0Directory = path + "assets/flash0/";
 
 	// Detect the "My Documents"(XP) or "Documents"(on Vista/7/8) folder.
 #if PPSSPP_PLATFORM(UWP)

@@ -1,4 +1,4 @@
-// Copyright (c) 2013- PPSSPP Project.
+﻿// Copyright (c) 2013- PPSSPP Project.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -91,8 +91,11 @@ bool CheckSupportInstancedTessellationGLES() {
 	int maxVertexTextureImageUnits;
 	glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &maxVertexTextureImageUnits);
 	bool vertexTexture = maxVertexTextureImageUnits >= 3; // At least 3 for hardware tessellation
-	bool instanceRendering = gl_extensions.GLES3 || gl_extensions.EXT_gpu_shader4
-		|| (!gl_extensions.IsGLES && gl_extensions.VersionGEThan(3, 1)/*GLSL 1.4*/);
+
+	bool canUseInstanceID = gl_extensions.EXT_draw_instanced || gl_extensions.ARB_draw_instanced;
+	bool canDefInstanceID = gl_extensions.IsGLES || gl_extensions.EXT_gpu_shader4;
+	bool instanceRendering = gl_extensions.GLES3 || (canUseInstanceID && canDefInstanceID);
+
 	bool textureFloat = gl_extensions.ARB_texture_float || gl_extensions.OES_texture_float;
 
 	return instanceRendering && vertexTexture && textureFloat;
@@ -324,7 +327,7 @@ void GameSettingsScreen::CreateViews() {
 	bezierChoiceDisable_ = g_Config.bSoftwareRendering || g_Config.bHardwareTessellation;
 	beziersChoice->SetDisabledPtr(&bezierChoiceDisable_);
 
-	CheckBox *tessellationHW = graphicsSettings->Add(new CheckBox(&g_Config.bHardwareTessellation, gr->T("Hardware Tessellation")));
+	CheckBox *tessellationHW = graphicsSettings->Add(new CheckBox(&g_Config.bHardwareTessellation, gr->T("Hardware Tessellation", "Hardware tessellation (experimental)")));
 	tessellationHW->OnClick.Add([=](EventParams &e) {
 		bezierChoiceDisable_ = g_Config.bSoftwareRendering || g_Config.bHardwareTessellation;
 		settingInfo_->Show(gr->T("HardwareTessellation Tip", "Uses hardware to make curves, always uses a fixed quality"), e.v);
@@ -401,14 +404,6 @@ void GameSettingsScreen::CreateViews() {
 		settingInfo_->Show(gr->T("TimerHack Tip", "Changes game clock based on emu speed, may break games"), e.v);
 		return UI::EVENT_CONTINUE;
 	});
-
-	CheckBox *alphaHack = graphicsSettings->Add(new CheckBox(&g_Config.bDisableAlphaTest, gr->T("Disable Alpha Test (PowerVR speedup)")));
-	alphaHack->OnClick.Add([=](EventParams &e) {
-		settingInfo_->Show(gr->T("DisableAlphaTest Tip", "Faster by sometimes drawing ugly boxes around things"), e.v);
-		return UI::EVENT_CONTINUE;
-	});
-	alphaHack->OnClick.Handle(this, &GameSettingsScreen::OnShaderChange);
-	alphaHack->SetDisabledPtr(&g_Config.bSoftwareRendering);
 
 	CheckBox *stencilTest = graphicsSettings->Add(new CheckBox(&g_Config.bDisableStencilTest, gr->T("Disable Stencil Test")));
 	stencilTest->SetDisabledPtr(&g_Config.bSoftwareRendering);
@@ -529,16 +524,16 @@ void GameSettingsScreen::CreateViews() {
 
 		// On non iOS systems, offer to let the user see this button.
 		// Some Windows touch devices don't have a back button or other button to call up the menu.
-#if !defined(IOS)
-		CheckBox *enablePauseBtn = controlsSettings->Add(new CheckBox(&g_Config.bShowTouchPause, co->T("Show Touch Pause Menu Button")));
+		if (System_GetPropertyInt(SYSPROP_HAS_BACK_BUTTON)) {
+			CheckBox *enablePauseBtn = controlsSettings->Add(new CheckBox(&g_Config.bShowTouchPause, co->T("Show Touch Pause Menu Button")));
 
-		// Don't allow the user to disable it once in-game, so they can't lock themselves out of the menu.
-		if (!PSP_IsInited()) {
-			enablePauseBtn->SetEnabledPtr(&g_Config.bShowTouchControls);
-		} else {
-			enablePauseBtn->SetEnabled(false);
+			// Don't allow the user to disable it once in-game, so they can't lock themselves out of the menu.
+			if (!PSP_IsInited()) {
+				enablePauseBtn->SetEnabledPtr(&g_Config.bShowTouchControls);
+			} else {
+				enablePauseBtn->SetEnabled(false);
+			}
 		}
-#endif
 
 		CheckBox *disableDiags = controlsSettings->Add(new CheckBox(&g_Config.bDisableDpadDiagonals, co->T("Disable D-Pad diagonals (4-way touch)")));
 		disableDiags->SetEnabledPtr(&g_Config.bShowTouchControls);
@@ -672,6 +667,20 @@ void GameSettingsScreen::CreateViews() {
 	systemSettings->Add(new CheckBox(&g_Config.bCheckForNewVersion, sy->T("VersionCheck", "Check for new versions of PPSSPP")));
 	if (g_Config.iMaxRecent > 0)
 		systemSettings->Add(new Choice(sy->T("Clear Recent Games List")))->OnClick.Handle(this, &GameSettingsScreen::OnClearRecents);
+
+	const std::string bgPng = GetSysDirectory(DIRECTORY_SYSTEM) + "background.png";
+	const std::string bgJpg = GetSysDirectory(DIRECTORY_SYSTEM) + "background.jpg";
+	if (File::Exists(bgPng) || File::Exists(bgJpg)) {
+		backgroundChoice_ = systemSettings->Add(new Choice(sy->T("Clear UI background")));
+	} else if (System_GetPropertyInt(SYSPROP_HAS_IMAGE_BROWSER)) {
+		backgroundChoice_ = systemSettings->Add(new Choice(sy->T("Set UI background...")));
+	} else {
+		backgroundChoice_ = nullptr;
+	}
+	if (backgroundChoice_ != nullptr) {
+		backgroundChoice_->OnClick.Handle(this, &GameSettingsScreen::OnChangeBackground);
+	}
+
 	systemSettings->Add(new Choice(sy->T("Restore Default Settings")))->OnClick.Handle(this, &GameSettingsScreen::OnRestoreDefaultSettings);
 	systemSettings->Add(new CheckBox(&g_Config.bEnableAutoLoad, sy->T("Auto Load Newest Savestate")));
 
@@ -913,6 +922,29 @@ UI::EventReturn GameSettingsScreen::OnClearRecents(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
+UI::EventReturn GameSettingsScreen::OnChangeBackground(UI::EventParams &e) {
+	const std::string bgPng = GetSysDirectory(DIRECTORY_SYSTEM) + "background.png";
+	const std::string bgJpg = GetSysDirectory(DIRECTORY_SYSTEM) + "background.jpg";
+	if (File::Exists(bgPng) || File::Exists(bgJpg)) {
+		if (File::Exists(bgPng)) {
+			File::Delete(bgPng);
+		}
+		if (File::Exists(bgJpg)) {
+			File::Delete(bgJpg);
+		}
+
+		NativeMessageReceived("bgImage_updated", "");
+	} else {
+		if (System_GetPropertyInt(SYSPROP_HAS_IMAGE_BROWSER)) {
+			System_SendMessage("bgImage_browse", "");
+		}
+	}
+
+	// Change to a browse or clear button.
+	RecreateViews();
+	return UI::EVENT_DONE;
+}
+
 UI::EventReturn GameSettingsScreen::OnReloadCheats(UI::EventParams &e) {
 	// Hmm, strange mechanism.
 	g_Config.bReloadCheats = true;
@@ -938,6 +970,7 @@ UI::EventReturn GameSettingsScreen::OnResolutionChange(UI::EventParams &e) {
 	if (g_Config.iAndroidHwScale == 1) {
 		RecreateActivity();
 	}
+	bloomHackEnable_ = g_Config.iInternalResolution != 1;
 	Reporting::UpdateConfig();
 	return UI::EVENT_DONE;
 }

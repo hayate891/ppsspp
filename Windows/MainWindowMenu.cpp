@@ -41,11 +41,14 @@ namespace MainWindow {
 	static const int numCPUs = 1;  // what?
 	extern bool noFocusPause;
 	static W32Util::AsyncBrowseDialog *browseDialog;
+	static W32Util::AsyncBrowseDialog *browseImageDialog;
 	static bool browsePauseAfter;
 
 	static std::map<int, std::string> initialMenuKeys;
-	static std::vector<std::string> countryCodes;
 	static std::vector<std::string> availableShaders;
+	static std::string menuLanguageID = "";
+	static bool menuShaderInfoLoaded = false;
+	std::vector<ShaderInfo> menuShaderInfo;
 
 	LRESULT CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 
@@ -163,7 +166,18 @@ namespace MainWindow {
 			CheckMenuItem(menu, item++, ((g_Config.sPostShaderName == availableShaders[i]) ? MF_CHECKED : MF_UNCHECKED));
 	}
 
-	void CreateShadersSubmenu(HMENU menu) {
+	bool CreateShadersSubmenu(HMENU menu) {
+		// We only reload this initially and when a menu is actually opened.
+		if (!menuShaderInfoLoaded) {
+			ReloadAllPostShaderInfo();
+			menuShaderInfoLoaded = true;
+		}
+		std::vector<ShaderInfo> info = GetAllPostShaderInfo();
+
+		if (menuShaderInfo.size() != info.size() || !std::equal(info.begin(), info.end(), menuShaderInfo.begin())) {
+			return false;
+		}
+
 		I18NCategory *des = GetI18NCategory("DesktopUI");
 		I18NCategory *ps = GetI18NCategory("PostShaders");
 		const std::wstring key = ConvertUTF8ToWString(des->T("Postprocessing Shader"));
@@ -175,15 +189,12 @@ namespace MainWindow {
 		RemoveMenu(optionsMenu, SUBMENU_CUSTOM_SHADERS, MF_BYPOSITION);
 		InsertMenu(optionsMenu, SUBMENU_CUSTOM_SHADERS, MF_POPUP | MF_STRING | MF_BYPOSITION, (UINT_PTR)shaderMenu, key.c_str());
 
-		ReloadAllPostShaderInfo();
-		std::vector<ShaderInfo> info = GetAllPostShaderInfo();
-		availableShaders.clear();
-
 		int item = ID_SHADERS_BASE + 1;
 		int checkedStatus = -1;
 
 		const char *translatedShaderName = nullptr;
 
+		availableShaders.clear();
 		for (auto i = info.begin(); i != info.end(); ++i) {
 			checkedStatus = MF_UNCHECKED;
 			availableShaders.push_back(i->section);
@@ -195,6 +206,9 @@ namespace MainWindow {
 
 			AppendMenu(shaderMenu, MF_STRING | MF_BYPOSITION | checkedStatus, item++, ConvertUTF8ToWString(translatedShaderName).c_str());
 		}
+
+		menuShaderInfo = info;
+		return true;
 	}
 
 	static void _TranslateMenuItem(const HMENU hMenu, const int menuIDOrPosition, const char *key, bool byCommand = false, const std::wstring& accelerator = L"") {
@@ -223,7 +237,7 @@ namespace MainWindow {
 		_TranslateMenuItem(GetSubMenu(menu, mainMenuItem), subMenuItem, key, false, accelerator);
 	}
 
-	void TranslateMenus(HWND hWnd, HMENU menu) {
+	void DoTranslateMenus(HWND hWnd, HMENU menu) {
 		// Menu headers and submenu headers don't have resource IDs,
 		// So we have to hardcode strings here, unfortunately.
 		TranslateMenu(menu, "File", MENU_FILE);
@@ -231,8 +245,6 @@ namespace MainWindow {
 		TranslateMenu(menu, "Debugging", MENU_DEBUG);
 		TranslateMenu(menu, "Game Settings", MENU_OPTIONS);
 		TranslateMenu(menu, "Help", MENU_HELP);
-
-		CreateShadersSubmenu(menu);
 
 		// File menu
 		TranslateMenuItem(menu, ID_FILE_LOAD);
@@ -335,13 +347,25 @@ namespace MainWindow {
 
 		// Help menu: it's translated in CreateHelpMenu.
 		CreateHelpMenu(menu);
+	}
 
-		// TODO: Urgh! Why do we need this here?
-		// The menu is supposed to enable/disable this stuff directly afterward.
-		SetIngameMenuItemStates(menu, GetUIState());
+	void TranslateMenus(HWND hWnd, HMENU menu) {
+		bool changed = false;
 
-		DrawMenuBar(hWnd);
-		UpdateMenus();
+		const std::string curLanguageID = i18nrepo.LanguageID();
+		if (curLanguageID != menuLanguageID) {
+			DoTranslateMenus(hWnd, menu);
+			menuLanguageID = curLanguageID;
+			changed = true;
+		}
+
+		if (CreateShadersSubmenu(menu)) {
+			changed = true;
+		}
+
+		if (changed) {
+			DrawMenuBar(hWnd);
+		}
 	}
 
 	void BrowseAndBoot(std::string defaultPath, bool browseDirectory) {
@@ -399,6 +423,37 @@ namespace MainWindow {
 		browseDialog = 0;
 	}
 
+	void BrowseBackground() {
+		static std::wstring filter = L"All supported images (*.jpg *.png)|*.jpg;*.png|All files (*.*)|*.*||";
+		for (size_t i = 0; i < filter.length(); i++) {
+			if (filter[i] == '|')
+				filter[i] = '\0';
+		}
+
+		W32Util::MakeTopMost(GetHWND(), false);
+		browseImageDialog = new W32Util::AsyncBrowseDialog(W32Util::AsyncBrowseDialog::OPEN, GetHWND(), WM_USER_BROWSE_BG_DONE, L"LoadFile", L"", filter, L"*.jpg;*.png;");
+	}
+
+	void BrowseBackgroundDone() {
+		std::string filename;
+		if (browseImageDialog->GetResult(filename)) {
+			std::wstring src = ConvertUTF8ToWString(filename);
+			std::wstring dest;
+			if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".jpg") {
+				dest = ConvertUTF8ToWString(GetSysDirectory(DIRECTORY_SYSTEM) + "background.jpg");
+			} else {
+				dest = ConvertUTF8ToWString(GetSysDirectory(DIRECTORY_SYSTEM) + "background.png");
+			}
+
+			CopyFileW(src.c_str(), dest.c_str(), FALSE);
+			NativeMessageReceived("bgImage_updated", "");
+		}
+
+		W32Util::MakeTopMost(GetHWND(), g_Config.bTopMost);
+
+		delete browseImageDialog;
+		browseImageDialog = nullptr;
+	}
 
 	static void UmdSwitchAction() {
 		std::string fn;
@@ -988,7 +1043,11 @@ namespace MainWindow {
 		}
 	}
 
-	void UpdateMenus() {
+	void UpdateMenus(bool isMenuSelect) {
+		if (isMenuSelect) {
+			menuShaderInfoLoaded = false;
+		}
+
 		HMENU menu = GetMenu(GetHWND());
 #define CHECKITEM(item,value) 	CheckMenuItem(menu,item,MF_BYCOMMAND | ((value) ? MF_CHECKED : MF_UNCHECKED));
 		CHECKITEM(ID_DEBUG_IGNOREILLEGALREADS, g_Config.bIgnoreBadMemAccess);
@@ -1251,19 +1310,18 @@ namespace MainWindow {
 		static GlobalUIState lastGlobalUIState = UISTATE_PAUSEMENU;
 		static CoreState lastCoreState = CORE_ERROR;
 
+		HMENU menu = GetMenu(GetHWND());
+		EnableMenuItem(menu, ID_DEBUG_LOG, !g_Config.bEnableLogging);
+		SetIngameMenuItemStates(menu, GetUIState());
+
 		if (lastGlobalUIState == GetUIState() && lastCoreState == coreState)
 			return;
 
 		lastCoreState = coreState;
 		lastGlobalUIState = GetUIState();
 
-		HMENU menu = GetMenu(GetHWND());
-
 		bool isPaused = Core_IsStepping() && GetUIState() == UISTATE_INGAME;
 		TranslateMenuItem(menu, ID_TOGGLE_PAUSE, L"\tF8", isPaused ? "Run" : "Pause");
-
-		SetIngameMenuItemStates(menu, GetUIState());
-		EnableMenuItem(menu, ID_DEBUG_LOG, !g_Config.bEnableLogging);
 	}
 
 	// Message handler for about box.
@@ -1273,11 +1331,7 @@ namespace MainWindow {
 		{
 			W32Util::CenterWindow(hDlg);
 			HWND versionBox = GetDlgItem(hDlg, IDC_VERSION);
-#ifdef GOLD
-			std::string windowText = "PPSSPP Gold ";
-#else
-			std::string windowText = "PPSSPP ";
-#endif
+			std::string windowText = System_GetPropertyInt(SYSPROP_APP_GOLD) ? "PPSSPP Gold " : "PPSSPP ";
 			windowText.append(PPSSPP_GIT_VERSION);
 			SetWindowText(versionBox, ConvertUTF8ToWString(windowText).c_str());
 		}

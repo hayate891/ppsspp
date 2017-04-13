@@ -36,6 +36,7 @@ PPSSPPWindows.exe.manifest
 PPSSPPDebug64.exe.manifest
 PPSSPPDebug.exe.manifest
 assets/flash0
+UWP/icph
 
 # For Mac
 .DS_Store
@@ -53,8 +54,12 @@ PPSSPPControls.dat
 *.iml
 build
 build.ios
-
+versionname.txt
+versioncode.txt
 build*/
+
+# Temp file used by jenkins windows build (TODO: remove)
+desc.txt
 
 
 Logs

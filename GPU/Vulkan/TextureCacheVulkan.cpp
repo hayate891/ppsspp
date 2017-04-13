@@ -271,7 +271,7 @@ void TextureCacheVulkan::SetFramebufferSamplingParams(u16 bufferWidth, u16 buffe
 }
 
 void TextureCacheVulkan::StartFrame() {
-	lastBoundTexture = nullptr;
+	InvalidateLastTexture();
 	timesInvalidatedAllThisFrame_ = 0;
 	texelsScaledThisFrame_ = 0;
 
@@ -342,6 +342,7 @@ void TextureCacheVulkan::BindTexture(TexCacheEntry *entry) {
 void TextureCacheVulkan::Unbind() {
 	imageView_ = VK_NULL_HANDLE;
 	sampler_ = VK_NULL_HANDLE;
+	InvalidateLastTexture();
 }
 
 void TextureCacheVulkan::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFramebuffer *framebuffer) {
@@ -428,13 +429,13 @@ void TextureCacheVulkan::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFr
 		const u32 clutTotalColors = clutMaxBytes_ / bytesPerColor;
 
 		TexCacheEntry::Status alphaStatus = CheckAlpha(clutBuf_, getClutDestFormatVulkan(clutFormat), clutTotalColors, clutTotalColors, 1);
-		gstate_c.textureFullAlpha = alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL;
-		gstate_c.textureSimpleAlpha = alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE;
+		gstate_c.SetTextureFullAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL);
+		gstate_c.SetTextureSimpleAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE);
 	} else {
 		entry->status &= ~TexCacheEntry::STATUS_DEPALETTIZE;
 
-		gstate_c.textureFullAlpha = gstate.getTextureFormat() == GE_TFMT_5650;
-		gstate_c.textureSimpleAlpha = gstate_c.textureFullAlpha;
+		gstate_c.SetTextureFullAlpha(gstate.getTextureFormat() == GE_TFMT_5650);
+		gstate_c.SetTextureSimpleAlpha(gstate_c.textureFullAlpha);
 	}
 
 	/*
@@ -452,7 +453,7 @@ void TextureCacheVulkan::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFr
 		key.mipEnable = false;
 		sampler_ = samplerCache_.GetOrCreateSampler(key);
 
-		lastBoundTexture = nullptr;
+		InvalidateLastTexture();
 	}
 }
 
@@ -502,9 +503,15 @@ void TextureCacheVulkan::BuildTexture(TexCacheEntry *const entry, bool replaceIm
 			break;
 		}
 
+		// If size reaches 1, stop, and override maxlevel.
+		int tw = gstate.getTextureWidth(i);
+		int th = gstate.getTextureHeight(i);
+		if (tw == 1 || th == 1) {
+			maxLevel = i;
+			break;
+		}
+
 		if (i > 0 && gstate_c.Supports(GPU_SUPPORTS_TEXTURE_LOD_CONTROL)) {
-			int tw = gstate.getTextureWidth(i);
-			int th = gstate.getTextureHeight(i);
 			if (tw != 1 && tw != (gstate.getTextureWidth(i - 1) >> 1))
 				badMipSizes = true;
 			else if (th != 1 && th != (gstate.getTextureHeight(i - 1) >> 1))
@@ -676,8 +683,8 @@ void TextureCacheVulkan::BuildTexture(TexCacheEntry *const entry, bool replaceIm
 
 	entry->vkTex->texture_->EndCreate();
 
-	gstate_c.textureFullAlpha = entry->GetAlphaStatus() == TexCacheEntry::STATUS_ALPHA_FULL;
-	gstate_c.textureSimpleAlpha = entry->GetAlphaStatus() != TexCacheEntry::STATUS_ALPHA_UNKNOWN;
+	gstate_c.SetTextureFullAlpha(entry->GetAlphaStatus() == TexCacheEntry::STATUS_ALPHA_FULL);
+	gstate_c.SetTextureSimpleAlpha(entry->GetAlphaStatus() != TexCacheEntry::STATUS_ALPHA_UNKNOWN);
 }
 
 VkFormat TextureCacheVulkan::GetDestFormat(GETextureFormat format, GEPaletteFormat clutFormat) const {

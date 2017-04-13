@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.ppsspp.ppsspp"
     android:installLocation="auto"
-    android:versionCode="1301"
-    android:versionName="1.3.0.1">
+    android:versionCode="14000000"
+    android:versionName="1.4.0.0">
 
     <uses-sdk
         android:minSdkVersion="9"
@@ -34,6 +34,7 @@
         android:logo="@drawable/ic_banner"
         android:isGame="true"
         android:banner="@drawable/tv_banner">
+        <meta-data android:name="android.max_aspect" android:value="2.1" />
         <activity
             android:name=".PpssppActivity"
             android:configChanges="orientation|locale|keyboard|keyboardHidden|navigation|fontScale|uiMode|navigation"

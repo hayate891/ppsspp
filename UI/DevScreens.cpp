@@ -464,9 +464,9 @@ void SystemInfoScreen::CreateViews() {
 #ifdef MOBILE_DEVICE
 	buildConfig->Add(new InfoItem("MOBILE_DEVICE", ""));
 #endif
-#ifdef GOLD
-	buildConfig->Add(new InfoItem("GOLD", ""));
-#endif
+	if (System_GetPropertyInt(SYSPROP_APP_GOLD)) {
+		buildConfig->Add(new InfoItem("GOLD", ""));
+	}
 
 	ViewGroup *cpuExtensionsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
 	cpuExtensionsScroll->SetTag("DevSystemInfoCPUExt");
@@ -899,6 +899,8 @@ struct { DebugShaderType type; const char *name; } shaderTypes[] = {
 	{ SHADER_TYPE_FRAGMENT, "Fragment" },
 	// { SHADER_TYPE_GEOMETRY, "Geometry" },
 	{ SHADER_TYPE_VERTEXLOADER, "VertexLoader" },
+	{ SHADER_TYPE_PIPELINE, "Pipeline" },
+	{ SHADER_TYPE_DEPAL, "Depal" },
 };
 
 void ShaderListScreen::CreateViews() {
@@ -913,7 +915,6 @@ void ShaderListScreen::CreateViews() {
 	tabs_->SetTag("DevShaderList");
 	layout->Add(tabs_);
 	layout->Add(new Button(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
-
 	for (size_t i = 0; i < ARRAY_SIZE(shaderTypes); i++) {
 		ScrollView *scroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(1.0));
 		LinearLayout *shaderList = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT));

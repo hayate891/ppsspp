@@ -1,6 +1,6 @@
 [Setup]
+AppVersion={#ApplicationVersion}
 AppName={cm:AppName}
-AppVersion=1.3.0
 DefaultDirName={pf}\PPSSPP
 ; Since no icons will be created in "{group}", we don't need the wizard
 ; to ask for a Start Menu folder name:
@@ -23,7 +23,7 @@ Source: "notinstalled.txt"; DestName: "installed.txt"; DestDir: "{app}";
 Source: "assets\*.*"; DestDir: "{app}\assets"
 Source: "assets\shaders\*.*"; DestDir: "{app}\assets\shaders"
 Source: "assets\lang\*.ini"; DestDir: "{app}\assets\lang"
-Source: "flash0\font\*.*"; DestDir: "{app}\flash0\font"
+Source: "assets\flash0\font\*.*"; DestDir: "{app}\assets\flash0\font"
 Source: "dx9sdk\8.1\Redist\D3D\x64\d3dcompiler_47.dll"; DestDir: "{app}"
 Source: "dx9sdk\8.1\Redist\D3D\x86\d3dcompiler_47.dll"; DestName: "d3dcompiler_47.x86.dll"; DestDir: "{app}"
 

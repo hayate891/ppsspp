@@ -31,6 +31,8 @@ enum {
 	FB_USAGE_RENDERTARGET = 2,
 	FB_USAGE_TEXTURE = 4,
 	FB_USAGE_CLUT = 8,
+	FB_USAGE_DOWNLOAD = 16,
+	FB_USAGE_DOWNLOAD_CLEAR = 32,
 };
 
 enum {
@@ -191,6 +193,7 @@ public:
 	bool NotifyFramebufferCopy(u32 src, u32 dest, int size, bool isMemset, u32 skipDrawReason);
 	void NotifyVideoUpload(u32 addr, int size, int width, GEBufferFormat fmt);
 	void UpdateFromMemory(u32 addr, int size, bool safe);
+	void ApplyClearToMemory(int x1, int y1, int x2, int y2, u32 clearColor);
 	virtual bool NotifyStencilUpload(u32 addr, int size, bool skipZero = false) = 0;
 	// Returns true if it's sure this is a direct FBO->FBO transfer and it has already handle it.
 	// In that case we hardly need to actually copy the bytes in VRAM, they will be wrong anyway (unless
@@ -292,6 +295,7 @@ protected:
 
 	// Used by ReadFramebufferToMemory and later framebuffer block copies
 	virtual void BlitFramebuffer(VirtualFramebuffer *dst, int dstX, int dstY, VirtualFramebuffer *src, int srcX, int srcY, int w, int h, int bpp) = 0;
+	void CopyFramebufferForColorTexture(VirtualFramebuffer *dst, VirtualFramebuffer *src, int flags);
 
 	void EstimateDrawingSize(u32 fb_address, GEBufferFormat fb_format, int viewport_width, int viewport_height, int region_width, int region_height, int scissor_width, int scissor_height, int fb_stride, int &drawing_width, int &drawing_height);
 	u32 FramebufferByteSize(const VirtualFramebuffer *vfb) const;

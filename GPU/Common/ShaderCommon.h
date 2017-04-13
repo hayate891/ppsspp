@@ -34,6 +34,7 @@ enum DebugShaderType {
 	SHADER_TYPE_GEOMETRY = 2,
 	SHADER_TYPE_VERTEXLOADER = 3,  // Not really a shader, but might as well re-use this mechanism
 	SHADER_TYPE_PIPELINE = 4,  // Vulkan and DX12 combines a bunch of state into pipeline objects. Might as well make them inspectable.
+	SHADER_TYPE_DEPAL = 5,
 };
 
 enum DebugShaderStringType {
@@ -98,8 +99,6 @@ enum : uint64_t {
 	DIRTY_FRAMEBUF = 1ULL << 40,
 	DIRTY_TEXTURE_IMAGE = 1ULL << 41,
 	DIRTY_TEXTURE_PARAMS = 1ULL << 42,
-
-	// Now we can add further dirty flags that are not uniforms.
 
 	DIRTY_ALL = 0xFFFFFFFFFFFFFFFF
 };

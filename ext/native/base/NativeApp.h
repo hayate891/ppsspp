@@ -153,6 +153,7 @@ enum SystemProperty {
 	SYSPROP_GPUDRIVER_VERSION,
 
 	SYSPROP_HAS_FILE_BROWSER,
+	SYSPROP_HAS_IMAGE_BROWSER,
 	SYSPROP_HAS_BACK_BUTTON,
 
 	// Available as Int:
@@ -164,6 +165,7 @@ enum SystemProperty {
 	SYSPROP_MOGA_VERSION,
 
 	SYSPROP_DEVICE_TYPE,
+	SYSPROP_APP_GOLD,  // To avoid having #ifdef GOLD other than in main.cpp and similar.
 
 	// Exposed on Android. Choosing the optimal sample rate for audio
 	// will result in lower latencies. Buffer size is automatically matched

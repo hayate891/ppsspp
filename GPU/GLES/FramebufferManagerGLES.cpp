@@ -547,28 +547,7 @@ void FramebufferManagerGLES::BindFramebufferAsColorTexture(int stage, VirtualFra
 			VirtualFramebuffer copyInfo = *framebuffer;
 			copyInfo.fbo = renderCopy;
 
-			int x = 0;
-			int y = 0;
-			int w = framebuffer->drawnWidth;
-			int h = framebuffer->drawnHeight;
-
-			// If max is not > min, we probably could not detect it.  Skip.
-			// See the vertex decoder, where this is updated.
-			if ((flags & BINDFBCOLOR_MAY_COPY_WITH_UV) == BINDFBCOLOR_MAY_COPY_WITH_UV && gstate_c.vertBounds.maxU > gstate_c.vertBounds.minU) {
-				x = gstate_c.vertBounds.minU;
-				y = gstate_c.vertBounds.minV;
-				w = gstate_c.vertBounds.maxU - x;
-				h = gstate_c.vertBounds.maxV - y;
-
-				// If we bound a framebuffer, apply the byte offset as pixels to the copy too.
-				if (flags & BINDFBCOLOR_APPLY_TEX_OFFSET) {
-					x += gstate_c.curTextureXOffset;
-					y += gstate_c.curTextureYOffset;
-				}
-			}
-
-			BlitFramebuffer(&copyInfo, x, y, framebuffer, x, y, w, h, 0);
-
+			CopyFramebufferForColorTexture(&copyInfo, framebuffer, flags);
 			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::FB_COLOR_BIT, 0);
 		} else {
 			draw_->BindFramebufferAsTexture(framebuffer->fbo, stage, Draw::FB_COLOR_BIT, 0);
@@ -808,12 +787,6 @@ void ConvertFromRGBA8888(u8 *dst, const u8 *src, u32 dstStride, u32 srcStride, u
 		u32 *dst32 = (u32 *)dst;
 		if (src == dst) {
 			return;
-		} else if (UseBGRA8888()) {
-			for (u32 y = 0; y < height; ++y) {
-				ConvertBGRA8888ToRGBA8888(dst32, src32, width);
-				src32 += srcStride;
-				dst32 += dstStride;
-			}
 		} else {
 			// Here let's assume they don't intersect
 			for (u32 y = 0; y < height; ++y) {
@@ -827,13 +800,7 @@ void ConvertFromRGBA8888(u8 *dst, const u8 *src, u32 dstStride, u32 srcStride, u
 		u16 *dst16 = (u16 *)dst;
 		switch (format) {
 			case GE_FORMAT_565: // BGR 565
-				if (UseBGRA8888()) {
-					for (u32 y = 0; y < height; ++y) {
-						ConvertBGRA8888ToRGB565(dst16, src32, width);
-						src32 += srcStride;
-						dst16 += dstStride;
-					}
-				} else {
+				{
 					for (u32 y = 0; y < height; ++y) {
 						ConvertRGBA8888ToRGB565(dst16, src32, width);
 						src32 += srcStride;
@@ -842,13 +809,7 @@ void ConvertFromRGBA8888(u8 *dst, const u8 *src, u32 dstStride, u32 srcStride, u
 				}
 				break;
 			case GE_FORMAT_5551: // ABGR 1555
-				if (UseBGRA8888()) {
-					for (u32 y = 0; y < height; ++y) {
-						ConvertBGRA8888ToRGBA5551(dst16, src32, width);
-						src32 += srcStride;
-						dst16 += dstStride;
-					}
-				} else {
+				{
 					for (u32 y = 0; y < height; ++y) {
 						ConvertRGBA8888ToRGBA5551(dst16, src32, width);
 						src32 += srcStride;
@@ -857,13 +818,7 @@ void ConvertFromRGBA8888(u8 *dst, const u8 *src, u32 dstStride, u32 srcStride, u
 				}
 				break;
 			case GE_FORMAT_4444: // ABGR 4444
-				if (UseBGRA8888()) {
-					for (u32 y = 0; y < height; ++y) {
-						ConvertBGRA8888ToRGBA4444(dst16, src32, width);
-						src32 += srcStride;
-						dst16 += dstStride;
-					}
-				} else {
+				{
 					for (u32 y = 0; y < height; ++y) {
 						ConvertRGBA8888ToRGBA4444(dst16, src32, width);
 						src32 += srcStride;
@@ -975,7 +930,7 @@ void FramebufferManagerGLES::PackFramebufferAsync_(VirtualFramebuffer *vfb) {
 			DEBUG_LOG(FRAMEBUF, "Reading PBO to memory , bufSize = %u, packed = %p, fb_address = %08x, stride = %u, pbo = %u",
 			pbo.size, packed, pbo.fb_address, pbo.stride, nextPBO);
 
-			if (useCPU || (UseBGRA8888() && pbo.format == GE_FORMAT_8888)) {
+			if (useCPU) {
 				u8 *dst = Memory::GetPointer(pbo.fb_address);
 				ConvertFromRGBA8888(dst, packed, pbo.stride, pbo.stride, pbo.stride, pbo.height, pbo.format);
 			} else {
@@ -1032,7 +987,7 @@ void FramebufferManagerGLES::PackFramebufferAsync_(VirtualFramebuffer *vfb) {
 			case GE_FORMAT_8888: // 32 bit RGBA
 			default:
 				pixelType = GL_UNSIGNED_BYTE;
-				pixelFormat = UseBGRA8888() ? GL_BGRA_EXT : GL_RGBA;
+				pixelFormat = GL_RGBA;
 				pixelSize = 4;
 				align = 4;
 				break;
@@ -1060,7 +1015,7 @@ void FramebufferManagerGLES::PackFramebufferAsync_(VirtualFramebuffer *vfb) {
 		if (useCPU) {
 			// If converting pixel formats on the CPU we'll always request RGBA8888
 			glPixelStorei(GL_PACK_ALIGNMENT, 4);
-			SafeGLReadPixels(0, 0, vfb->fb_stride, vfb->height, UseBGRA8888() ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, 0);
+			SafeGLReadPixels(0, 0, vfb->fb_stride, vfb->height, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 		} else {
 			// Otherwise we'll directly request the format we need and let the GPU sort it out
 			glPixelStorei(GL_PACK_ALIGNMENT, align);
@@ -1102,7 +1057,7 @@ void FramebufferManagerGLES::PackFramebufferSync_(VirtualFramebuffer *vfb, int x
 	u32 bufSize = vfb->fb_stride * h * 4;
 	u32 fb_address = 0x04000000 | vfb->fb_address;
 
-	bool convert = vfb->format != GE_FORMAT_8888 || UseBGRA8888();
+	bool convert = vfb->format != GE_FORMAT_8888;
 	const int dstBpp = vfb->format == GE_FORMAT_8888 ? 4 : 2;
 	const int packWidth = std::min(vfb->fb_stride, std::min(x + w, (int)vfb->width));
 
@@ -1127,9 +1082,6 @@ void FramebufferManagerGLES::PackFramebufferSync_(VirtualFramebuffer *vfb, int x
 
 		glPixelStorei(GL_PACK_ALIGNMENT, 4);
 		GLenum glfmt = GL_RGBA;
-		if (UseBGRA8888()) {
-			glfmt = GL_BGRA_EXT;
-		}
 		CHECK_GL_ERROR_IF_DEBUG();
 
 		SafeGLReadPixels(0, y, h == 1 ? packWidth : vfb->fb_stride, h, glfmt, GL_UNSIGNED_BYTE, packed);

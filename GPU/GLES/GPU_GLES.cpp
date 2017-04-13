@@ -65,7 +65,7 @@ static const GLESCommandTableEntry commandTable[] = {
 	// Changes that dirty the current texture.
 	{ GE_CMD_TEXSIZE0, FLAG_FLUSHBEFOREONCHANGE | FLAG_EXECUTE, DIRTY_UVSCALEOFFSET, &GPU_GLES::Execute_TexSize0 },
 
-	{ GE_CMD_STENCILTEST, FLAG_FLUSHBEFOREONCHANGE, DIRTY_STENCILREPLACEVALUE},
+	{ GE_CMD_STENCILTEST, FLAG_FLUSHBEFOREONCHANGE, DIRTY_STENCILREPLACEVALUE },
 
 	// Changing the vertex type requires us to flush.
 	{ GE_CMD_VERTEXTYPE, FLAG_FLUSHBEFOREONCHANGE | FLAG_EXECUTEONCHANGE, 0, &GPU_GLES::Execute_VertexType },
@@ -299,8 +299,9 @@ void GPU_GLES::CheckGPUFeatures() {
 	if (gl_extensions.EXT_texture_filter_anisotropic)
 		features |= GPU_SUPPORTS_ANISOTROPY;
 
-	if (gl_extensions.GLES3 || gl_extensions.EXT_gpu_shader4
-		|| (!gl_extensions.IsGLES && gl_extensions.VersionGEThan(3, 1)/*GLSL 1.4*/))
+	bool canUseInstanceID = gl_extensions.EXT_draw_instanced || gl_extensions.ARB_draw_instanced;
+	bool canDefInstanceID = gl_extensions.IsGLES || gl_extensions.EXT_gpu_shader4;
+	bool instanceRendering = gl_extensions.GLES3 || (canUseInstanceID && canDefInstanceID);
 		features |= GPU_SUPPORTS_INSTANCE_RENDERING;
 
 	int maxVertexTextureImageUnits;
@@ -635,8 +636,6 @@ void GPU_GLES::ExecuteOp(u32 op, u32 diff) {
 }
 
 void GPU_GLES::Execute_Prim(u32 op, u32 diff) {
-	SetDrawType(DRAW_PRIM);
-
 	// This drives all drawing. All other state we just buffer up, then we apply it only
 	// when it's time to draw. As most PSP games set state redundantly ALL THE TIME, this is a huge optimization.
 
@@ -647,6 +646,8 @@ void GPU_GLES::Execute_Prim(u32 op, u32 diff) {
 
 	if (count == 0)
 		return;
+
+	SetDrawType(DRAW_PRIM, prim);
 
 	// Discard AA lines as we can't do anything that makes sense with these anyway. The SW plugin might, though.
 
@@ -727,8 +728,6 @@ void GPU_GLES::Execute_VertexTypeSkinning(u32 op, u32 diff) {
 }
 
 void GPU_GLES::Execute_Bezier(u32 op, u32 diff) {
-	SetDrawType(DRAW_BEZIER);
-
 	// We don't dirty on normal changes anymore as we prescale, but it's needed for splines/bezier.
 	gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
 
@@ -762,6 +761,8 @@ void GPU_GLES::Execute_Bezier(u32 op, u32 diff) {
 	}
 
 	GEPatchPrimType patchPrim = gstate.getPatchPrimitiveType();
+	SetDrawType(DRAW_BEZIER, PatchPrimToPrim(patchPrim));
+
 	int bz_ucount = op & 0xFF;
 	int bz_vcount = (op >> 8) & 0xFF;
 	bool computeNormals = gstate.isLightingEnabled();
@@ -786,8 +787,6 @@ void GPU_GLES::Execute_Bezier(u32 op, u32 diff) {
 }
 
 void GPU_GLES::Execute_Spline(u32 op, u32 diff) {
-	SetDrawType(DRAW_SPLINE);
-
 	// We don't dirty on normal changes anymore as we prescale, but it's needed for splines/bezier.
 	gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
 
@@ -825,6 +824,7 @@ void GPU_GLES::Execute_Spline(u32 op, u32 diff) {
 	int sp_utype = (op >> 16) & 0x3;
 	int sp_vtype = (op >> 18) & 0x3;
 	GEPatchPrimType patchPrim = gstate.getPatchPrimitiveType();
+	SetDrawType(DRAW_SPLINE, PatchPrimToPrim(patchPrim));
 	bool computeNormals = gstate.isLightingEnabled();
 	bool patchFacing = gstate.patchfacing & 1;
 	u32 vertType = gstate.vertType;
@@ -991,17 +991,23 @@ bool GPU_GLES::DescribeCodePtr(const u8 *ptr, std::string &name) {
 }
 
 std::vector<std::string> GPU_GLES::DebugGetShaderIDs(DebugShaderType type) {
-	if (type == SHADER_TYPE_VERTEXLOADER) {
+	switch (type) {
+	case SHADER_TYPE_VERTEXLOADER:
 		return drawEngine_.DebugGetVertexLoaderIDs();
-	} else {
+	case SHADER_TYPE_DEPAL:
+		return depalShaderCache_.DebugGetShaderIDs(type);
+	default:
 		return shaderManagerGL_->DebugGetShaderIDs(type);
 	}
 }
 
 std::string GPU_GLES::DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType) {
-	if (type == SHADER_TYPE_VERTEXLOADER) {
+	switch (type) {
+	case SHADER_TYPE_VERTEXLOADER:
 		return drawEngine_.DebugGetVertexLoaderString(id, stringType);
-	} else {
+	case SHADER_TYPE_DEPAL:
+		return depalShaderCache_.DebugGetShaderString(id, type, stringType);
+	default:
 		return shaderManagerGL_->DebugGetShaderString(id, type, stringType);
 	}
 }

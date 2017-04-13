@@ -143,7 +143,7 @@ void TextureCacheD3D11::ReleaseTexture(TexCacheEntry *entry, bool delete_them) {
 }
 
 void TextureCacheD3D11::ForgetLastTexture() {
-	lastBoundTexture = INVALID_TEX;
+	InvalidateLastTexture();
 	gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
 	ID3D11ShaderResourceView *nullTex = nullptr;
 	context_->PSSetShaderResources(0, 1, &nullTex);
@@ -201,7 +201,7 @@ void TextureCacheD3D11::SetFramebufferSamplingParams(u16 bufferWidth, u16 buffer
 }
 
 void TextureCacheD3D11::StartFrame() {
-	lastBoundTexture = INVALID_TEX;
+	InvalidateLastTexture();
 	timesInvalidatedAllThisFrame_ = 0;
 
 	if (texelsScaledThisFrame_) {
@@ -264,6 +264,7 @@ void TextureCacheD3D11::BindTexture(TexCacheEntry *entry) {
 void TextureCacheD3D11::Unbind() {
 	ID3D11ShaderResourceView *nullView = nullptr;
 	context_->PSSetShaderResources(0, 1, &nullView);
+	InvalidateLastTexture();
 }
 
 class TextureShaderApplierD3D11 {
@@ -390,13 +391,14 @@ protected:
 
 void TextureCacheD3D11::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFramebuffer *framebuffer) {
 	ID3D11PixelShader *pshader = nullptr;
-	const GEPaletteFormat clutFormat = gstate.getClutPaletteFormat();
+	uint32_t clutMode = gstate.clutformat & 0xFFFFFF;
 	if ((entry->status & TexCacheEntry::STATUS_DEPALETTIZE) && !g_Config.bDisableSlowFramebufEffects) {
-		pshader = depalShaderCache_->GetDepalettizePixelShader(clutFormat, framebuffer->drawnFormat);
+		pshader = depalShaderCache_->GetDepalettizePixelShader(clutMode, framebuffer->drawnFormat);
 	}
 
 	if (pshader) {
 		bool expand32 = !gstate_c.Supports(GPU_SUPPORTS_16BIT_FORMATS);
+		const GEPaletteFormat clutFormat = gstate.getClutPaletteFormat();
 		ID3D11ShaderResourceView *clutTexture = depalShaderCache_->GetClutTexture(clutFormat, clutHash_, clutBuf_, expand32);
 
 		Draw::Framebuffer *depalFBO = framebufferManagerD3D11_->GetTempFBO(framebuffer->renderWidth, framebuffer->renderHeight, Draw::FBO_8888);
@@ -423,22 +425,22 @@ void TextureCacheD3D11::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFra
 		const u32 clutTotalColors = clutMaxBytes_ / bytesPerColor;
 
 		TexCacheEntry::Status alphaStatus = CheckAlpha(clutBuf_, GetClutDestFormatD3D11(clutFormat), clutTotalColors, clutTotalColors, 1);
-		gstate_c.textureFullAlpha = alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL;
-		gstate_c.textureSimpleAlpha = alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE;
+		gstate_c.SetTextureFullAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL);
+		gstate_c.SetTextureSimpleAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE);
 	} else {
 		entry->status &= ~TexCacheEntry::STATUS_DEPALETTIZE;
 
 		framebufferManagerD3D11_->BindFramebufferAsColorTexture(0, framebuffer, BINDFBCOLOR_MAY_COPY_WITH_UV | BINDFBCOLOR_APPLY_TEX_OFFSET);
 
-		gstate_c.textureFullAlpha = gstate.getTextureFormat() == GE_TFMT_5650;
-		gstate_c.textureSimpleAlpha = gstate_c.textureFullAlpha;
+		gstate_c.SetTextureFullAlpha(gstate.getTextureFormat() == GE_TFMT_5650);
+		gstate_c.SetTextureSimpleAlpha(gstate_c.textureFullAlpha);
 		framebufferManagerD3D11_->RebindFramebuffer();
 	}
 	SamplerCacheKey samplerKey;
 	SetFramebufferSamplingParams(framebuffer->bufferWidth, framebuffer->bufferHeight, samplerKey);
 	ID3D11SamplerState *state = samplerCache_.GetOrCreateSampler(device_, samplerKey);
 	context_->PSSetSamplers(0, 1, &state);
-	lastBoundTexture = INVALID_TEX;
+	InvalidateLastTexture();
 }
 
 
@@ -473,9 +475,15 @@ void TextureCacheD3D11::BuildTexture(TexCacheEntry *const entry, bool replaceIma
 			break;
 		}
 
+		// If size reaches 1, stop, and override maxlevel.
+		int tw = gstate.getTextureWidth(i);
+		int th = gstate.getTextureHeight(i);
+		if (tw == 1 || th == 1) {
+			maxLevel = i;
+			break;
+		}
+
 		if (i > 0 && gstate_c.Supports(GPU_SUPPORTS_TEXTURE_LOD_CONTROL)) {
-			int tw = gstate.getTextureWidth(i);
-			int th = gstate.getTextureHeight(i);
 			if (tw != 1 && tw != (gstate.getTextureWidth(i - 1) >> 1))
 				badMipSizes = true;
 			else if (th != 1 && th != (gstate.getTextureHeight(i - 1) >> 1))

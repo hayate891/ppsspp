@@ -235,6 +235,36 @@ public:
 	bool bShowDebuggerOnLoad;
 	int iShowFPSCounter;
 
+	// TODO: Maybe move to a separate theme system.
+	uint32_t uItemStyleFg;
+	uint32_t uItemStyleBg;
+	uint32_t uItemFocusedStyleFg;
+	uint32_t uItemFocusedStyleBg;
+	uint32_t uItemDownStyleFg;
+	uint32_t uItemDownStyleBg;
+	uint32_t uItemDisabledStyleFg;
+	uint32_t uItemDisabledStyleBg;
+	uint32_t uItemHighlightedStyleFg;
+	uint32_t uItemHighlightedStyleBg;
+
+	uint32_t uButtonStyleFg;
+	uint32_t uButtonStyleBg;
+	uint32_t uButtonFocusedStyleFg;
+	uint32_t uButtonFocusedStyleBg;
+	uint32_t uButtonDownStyleFg;
+	uint32_t uButtonDownStyleBg;
+	uint32_t uButtonDisabledStyleFg;
+	uint32_t uButtonDisabledStyleBg;
+	uint32_t uButtonHighlightedStyleFg;
+	uint32_t uButtonHighlightedStyleBg;
+
+	uint32_t uHeaderStyleFg;
+	uint32_t uInfoStyleFg;
+	uint32_t uInfoStyleBg;
+	uint32_t uPopupTitleStyleFg;
+	uint32_t uPopupStyleFg;
+	uint32_t uPopupStyleBg;
+
 	bool bLogFrameDrops;
 	bool bShowDebugStats;
 	bool bShowAudioDebug;
@@ -348,9 +378,8 @@ public:
 	int iCombokey3;
 	int iCombokey4;
 
-#if !defined(IOS)
+	// Ignored on iOS and other platforms that lack pause.
 	bool bShowTouchPause;
-#endif
 
 	bool bHapticFeedback;
 
@@ -365,10 +394,6 @@ public:
 	float fXInputAnalogSensitivity;
 
 	float fAnalogLimiterDeadzone;
-	// GLES backend-specific hacks. Not saved to the ini file, do not add checkboxes. Will be made into
-	// proper options when good enough.
-	bool bDisableAlphaTest;  // Helps PowerVR performance immensely, breaks some graphics
-	// End GLES hacks.
 
 	// Use the hardware scaler to scale up the image to save fillrate. Similar to Windows' window size, really.
 	int iAndroidHwScale;  // 0 = device resolution. 1 = 480x272 (extended to correct aspect), 2 = 960x544 etc.

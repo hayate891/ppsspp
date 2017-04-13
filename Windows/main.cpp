@@ -213,9 +213,17 @@ int System_GetPropertyInt(SystemProperty prop) {
 	case SYSPROP_DISPLAY_DPI:
 		return ScreenDPI();
 	case SYSPROP_HAS_FILE_BROWSER:
-		return true;
+		return 1;
+	case SYSPROP_HAS_IMAGE_BROWSER:
+		return 1;
 	case SYSPROP_HAS_BACK_BUTTON:
 		return 1;
+	case SYSPROP_APP_GOLD:
+#ifdef GOLD
+		return 1;
+#else
+		return 0;
+#endif
 	default:
 		return -1;
 	}
@@ -235,6 +243,10 @@ void System_SendMessage(const char *command, const char *parameter) {
 			GlobalFree(handle);
 			CloseClipboard();
 		}
+	} else if (!strcmp(command, "browse_file")) {
+		MainWindow::BrowseAndBoot("");
+	} else if (!strcmp(command, "bgImage_browse")) {
+		MainWindow::BrowseBackground();
 	}
 }
 

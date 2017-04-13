@@ -96,7 +96,7 @@ void TextureCacheDX9::ReleaseTexture(TexCacheEntry *entry, bool delete_them) {
 }
 
 void TextureCacheDX9::ForgetLastTexture() {
-	lastBoundTexture = INVALID_TEX;
+	InvalidateLastTexture();
 	gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
 }
 
@@ -213,7 +213,7 @@ void TextureCacheDX9::SetFramebufferSamplingParams(u16 bufferWidth, u16 bufferHe
 }
 
 void TextureCacheDX9::StartFrame() {
-	lastBoundTexture = INVALID_TEX;
+	InvalidateLastTexture();
 	timesInvalidatedAllThisFrame_ = 0;
 
 	if (texelsScaledThisFrame_) {
@@ -279,6 +279,7 @@ void TextureCacheDX9::BindTexture(TexCacheEntry *entry) {
 
 void TextureCacheDX9::Unbind() {
 	device_->SetTexture(0, NULL);
+	InvalidateLastTexture();
 }
 
 class TextureShaderApplierDX9 {
@@ -407,12 +408,13 @@ protected:
 
 void TextureCacheDX9::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFramebuffer *framebuffer) {
 	LPDIRECT3DPIXELSHADER9 pshader = nullptr;
-	const GEPaletteFormat clutFormat = gstate.getClutPaletteFormat();
+	uint32_t clutMode = gstate.clutformat & 0xFFFFFF;
 	if ((entry->status & TexCacheEntry::STATUS_DEPALETTIZE) && !g_Config.bDisableSlowFramebufEffects) {
-		pshader = depalShaderCache_->GetDepalettizePixelShader(clutFormat, framebuffer->drawnFormat);
+		pshader = depalShaderCache_->GetDepalettizePixelShader(clutMode, framebuffer->drawnFormat);
 	}
 
 	if (pshader) {
+		const GEPaletteFormat clutFormat = gstate.getClutPaletteFormat();
 		LPDIRECT3DTEXTURE9 clutTexture = depalShaderCache_->GetClutTexture(clutFormat, clutHash_, clutBuf_);
 
 		Draw::Framebuffer *depalFBO = framebufferManagerDX9_->GetTempFBO(framebuffer->renderWidth, framebuffer->renderHeight, Draw::FBO_8888);
@@ -444,21 +446,21 @@ void TextureCacheDX9::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFrame
 		const u32 clutTotalColors = clutMaxBytes_ / bytesPerColor;
 
 		TexCacheEntry::Status alphaStatus = CheckAlpha(clutBuf_, getClutDestFormat(clutFormat), clutTotalColors, clutTotalColors, 1);
-		gstate_c.textureFullAlpha = alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL;
-		gstate_c.textureSimpleAlpha = alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE;
+		gstate_c.SetTextureFullAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL);
+		gstate_c.SetTextureSimpleAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE);
 	} else {
 		entry->status &= ~TexCacheEntry::STATUS_DEPALETTIZE;
 
 		framebufferManagerDX9_->BindFramebufferAsColorTexture(0, framebuffer, BINDFBCOLOR_MAY_COPY_WITH_UV | BINDFBCOLOR_APPLY_TEX_OFFSET);
 
-		gstate_c.textureFullAlpha = gstate.getTextureFormat() == GE_TFMT_5650;
-		gstate_c.textureSimpleAlpha = gstate_c.textureFullAlpha;
+		gstate_c.SetTextureFullAlpha(gstate.getTextureFormat() == GE_TFMT_5650);
+		gstate_c.SetTextureSimpleAlpha(gstate_c.textureFullAlpha);
 	}
 
 	framebufferManagerDX9_->RebindFramebuffer();
 	SetFramebufferSamplingParams(framebuffer->bufferWidth, framebuffer->bufferHeight);
 
-	lastBoundTexture = INVALID_TEX;
+	InvalidateLastTexture();
 }
 
 void TextureCacheDX9::BuildTexture(TexCacheEntry *const entry, bool replaceImages) {
@@ -492,9 +494,15 @@ void TextureCacheDX9::BuildTexture(TexCacheEntry *const entry, bool replaceImage
 			break;
 		}
 
+		// If size reaches 1, stop, and override maxlevel.
+		int tw = gstate.getTextureWidth(i);
+		int th = gstate.getTextureHeight(i);
+		if (tw == 1 || th == 1) {
+			maxLevel = i;
+			break;
+		}
+
 		if (i > 0 && gstate_c.Supports(GPU_SUPPORTS_TEXTURE_LOD_CONTROL)) {
-			int tw = gstate.getTextureWidth(i);
-			int th = gstate.getTextureHeight(i);
 			if (tw != 1 && tw != (gstate.getTextureWidth(i - 1) >> 1))
 				badMipSizes = true;
 			else if (th != 1 && th != (gstate.getTextureHeight(i - 1) >> 1))

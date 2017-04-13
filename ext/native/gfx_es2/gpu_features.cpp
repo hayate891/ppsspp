@@ -189,8 +189,8 @@ void CheckGLExtensions() {
 			// Try to load GLES 3.0 only if "3.0" found in version
 			// This simple heuristic avoids issues on older devices where you can only call eglGetProcAddress a limited
 			// number of times. Make sure to check for 3.0 in the shader version too to avoid false positives, see #5584.
-			bool gl_3_0_in_string = strstr(versionStr, "3.0") && strstr(glslVersionStr, "3.0");
-			bool gl_3_1_in_string = strstr(versionStr, "3.1") && strstr(glslVersionStr, "3.1");  // intentionally left out .1
+			bool gl_3_0_in_string = strstr(versionStr, "3.0") && (glslVersionStr && strstr(glslVersionStr, "3.0"));
+			bool gl_3_1_in_string = strstr(versionStr, "3.1") && (glslVersionStr && strstr(glslVersionStr, "3.1"));  // intentionally left out .1
 			if ((gl_3_0_in_string || gl_3_1_in_string) && gl3stubInit()) {
 				gl_extensions.ver[0] = 3;
 				if (gl_3_1_in_string) {
@@ -261,8 +261,10 @@ void CheckGLExtensions() {
 
 	// Check the desktop extension instead of the OES one. They are very similar.
 	// Also explicitly check those ATI devices that claims to support npot
-	gl_extensions.OES_texture_npot = strstr(extString, "GL_ARB_texture_non_power_of_two") != 0
-		&& !(((strncmp(renderer, "ATI RADEON X", 12) == 0) || (strncmp(renderer, "ATI MOBILITY RADEON X", 21) == 0)));
+	if (renderer) {
+		gl_extensions.OES_texture_npot = strstr(extString, "GL_ARB_texture_non_power_of_two") != 0
+			&& !(((strncmp(renderer, "ATI RADEON X", 12) == 0) || (strncmp(renderer, "ATI MOBILITY RADEON X", 21) == 0)));
+	}
 
 	gl_extensions.ARB_blend_func_extended = strstr(extString, "GL_ARB_blend_func_extended") != 0;
 	gl_extensions.EXT_blend_func_extended = strstr(extString, "GL_EXT_blend_func_extended") != 0;
@@ -278,6 +280,8 @@ void CheckGLExtensions() {
 	gl_extensions.ARB_vertex_array_object = strstr(extString, "GL_ARB_vertex_array_object") != 0;
 	gl_extensions.ARB_texture_float = strstr(extString, "GL_ARB_texture_float") != 0;
 	gl_extensions.EXT_texture_filter_anisotropic = strstr(extString, "GL_EXT_texture_filter_anisotropic") != 0;
+	gl_extensions.EXT_draw_instanced = strstr(extString, "GL_EXT_draw_instanced") != 0;
+	gl_extensions.ARB_draw_instanced = strstr(extString, "GL_ARB_draw_instanced") != 0;
 
 	if (gl_extensions.IsGLES) {
 		gl_extensions.OES_texture_npot = strstr(extString, "GL_OES_texture_npot") != 0;

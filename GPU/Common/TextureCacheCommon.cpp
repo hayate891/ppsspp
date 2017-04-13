@@ -219,7 +219,6 @@ void TextureCacheCommon::SetTexture(bool force) {
 	if (!Memory::IsValidAddress(texaddr)) {
 		// Bind a null texture and return.
 		Unbind();
-		InvalidateLastTexture();
 		return;
 	}
 
@@ -255,7 +254,7 @@ void TextureCacheCommon::SetTexture(bool force) {
 
 	TexCache::iterator iter = cache_.find(cachekey);
 	TexCacheEntry *entry = nullptr;
-	gstate_c.needShaderTexClamp = false;
+	gstate_c.SetNeedShaderTexclamp(false);
 	gstate_c.skipDrawReason &= ~SKIPDRAW_BAD_FB_TEXTURE;
 	gstate_c.bgraTexture = isBgraBackend_;
 
@@ -437,11 +436,12 @@ void TextureCacheCommon::Decimate() {
 		VERBOSE_LOG(G3D, "Decimated texture cache, saved %d estimated bytes - now %d bytes", had - cacheSizeEstimate_, cacheSizeEstimate_);
 	}
 
+	// If enabled, we also need to clear the secondary cache.
 	if (g_Config.bTextureSecondaryCache && secondCacheSizeEstimate_ >= TEXCACHE_SECOND_MIN_PRESSURE) {
 		const u32 had = secondCacheSizeEstimate_;
 
 		for (TexCache::iterator iter = secondCache_.begin(); iter != secondCache_.end(); ) {
-			// In low memory mode, we kill them all.
+			// In low memory mode, we kill them all since secondary cache is disabled.
 			if (lowMemoryMode_ || iter->second->lastFrame + TEXTURE_SECOND_KILL_AGE < gpuStats.numFlips) {
 				ReleaseTexture(iter->second.get(), true);
 				secondCacheSizeEstimate_ -= EstimateTexMemoryUsage(iter->second.get());
@@ -482,7 +482,7 @@ bool TextureCacheCommon::HandleTextureChange(TexCacheEntry *const entry, const c
 			// Instead, let's use glTexSubImage to replace the images.
 			replaceImages = true;
 		} else {
-			InvalidateLastTexture(entry);
+			InvalidateLastTexture();
 			ReleaseTexture(entry, true);
 			entry->status &= ~TexCacheEntry::STATUS_IS_SCALED;
 		}
@@ -746,9 +746,9 @@ void TextureCacheCommon::SetTextureFramebuffer(TexCacheEntry *entry, VirtualFram
 		gstate_c.bgraTexture = false;
 		gstate_c.curTextureXOffset = fbInfo.xOffset;
 		gstate_c.curTextureYOffset = fbInfo.yOffset;
-		gstate_c.needShaderTexClamp = gstate_c.curTextureWidth != (u32)gstate.getTextureWidth(0) || gstate_c.curTextureHeight != (u32)gstate.getTextureHeight(0);
+		gstate_c.SetNeedShaderTexclamp(gstate_c.curTextureWidth != (u32)gstate.getTextureWidth(0) || gstate_c.curTextureHeight != (u32)gstate.getTextureHeight(0));
 		if (gstate_c.curTextureXOffset != 0 || gstate_c.curTextureYOffset != 0) {
-			gstate_c.needShaderTexClamp = true;
+			gstate_c.SetNeedShaderTexclamp(true);
 		}
 
 		nextTexture_ = entry;
@@ -758,7 +758,7 @@ void TextureCacheCommon::SetTextureFramebuffer(TexCacheEntry *entry, VirtualFram
 			framebuffer->fbo = nullptr;
 		}
 		Unbind();
-		gstate_c.needShaderTexClamp = false;
+		gstate_c.SetNeedShaderTexclamp(false);
 	}
 
 	nextNeedsRehash_ = false;
@@ -1380,6 +1380,9 @@ void TextureCacheCommon::ApplyTexture() {
 			int w = gstate.getTextureWidth(0);
 			int h = gstate.getTextureHeight(0);
 			entry->fullhash = QuickTexHash(replacer_, entry->addr, entry->bufw, w, h, GETextureFormat(entry->format), entry);
+
+			// TODO: Here we could check the secondary cache; maybe the texture is in there?
+			// We would need to abort the build if so.
 		}
 		if (nextNeedsChange_) {
 			// This texture existed previously, let's handle the change.
@@ -1393,7 +1396,8 @@ void TextureCacheCommon::ApplyTexture() {
 			replaceImages = HandleTextureChange(entry, "hash fail", true, doDelete);
 			nextNeedsRebuild_ = true;
 		} else if (nextTexture_ != nullptr) {
-			// Secondary cache picked a different texture, use it.
+			// The secondary cache may choose an entry from its storage by setting nextTexture_.
+			// This means we should set that, instead of our previous entry.
 			entry = nextTexture_;
 			nextTexture_ = nullptr;
 			UpdateMaxSeenV(entry, gstate.isModeThrough());
@@ -1410,8 +1414,8 @@ void TextureCacheCommon::ApplyTexture() {
 		ApplyTextureFramebuffer(entry, entry->framebuffer);
 	} else {
 		BindTexture(entry);
-		gstate_c.textureFullAlpha = entry->GetAlphaStatus() == TexCacheEntry::STATUS_ALPHA_FULL;
-		gstate_c.textureSimpleAlpha = entry->GetAlphaStatus() != TexCacheEntry::STATUS_ALPHA_UNKNOWN;
+		gstate_c.SetTextureFullAlpha(entry->GetAlphaStatus() == TexCacheEntry::STATUS_ALPHA_FULL);
+		gstate_c.SetTextureSimpleAlpha(entry->GetAlphaStatus() != TexCacheEntry::STATUS_ALPHA_UNKNOWN);
 	}
 }
 
@@ -1420,6 +1424,7 @@ void TextureCacheCommon::Clear(bool delete_them) {
 	for (TexCache::iterator iter = cache_.begin(); iter != cache_.end(); ++iter) {
 		ReleaseTexture(iter->second.get(), delete_them);
 	}
+	// In case the setting was changed, we ALWAYS clear the secondary cache (enabled or not.)
 	for (TexCache::iterator iter = secondCache_.begin(); iter != secondCache_.end(); ++iter) {
 		ReleaseTexture(iter->second.get(), delete_them);
 	}
@@ -1464,29 +1469,47 @@ bool TextureCacheCommon::CheckFullHash(TexCacheEntry *entry, bool &doDelete) {
 	}
 
 	// Don't give up just yet.  Let's try the secondary cache if it's been invalidated before.
-	// If it's failed a bunch of times, then the second cache is just wasting time and VRAM.
 	if (g_Config.bTextureSecondaryCache) {
 		// Don't forget this one was unreliable (in case we match a secondary entry.)
 		entry->status |= TexCacheEntry::STATUS_UNRELIABLE;
 
+		// If it's failed a bunch of times, then the second cache is just wasting time and VRAM.
+		// In that case, skip.
 		if (entry->numInvalidated > 2 && entry->numInvalidated < 128 && !lowMemoryMode_) {
+			// We have a new hash: look for that hash in the secondary cache.
 			u64 secondKey = fullhash | (u64)entry->cluthash << 32;
 			TexCache::iterator secondIter = secondCache_.find(secondKey);
 			if (secondIter != secondCache_.end()) {
+				// Found it, but does it match our current params?  If not, abort.
 				TexCacheEntry *secondEntry = secondIter->second.get();
 				if (secondEntry->Matches(entry->dim, entry->format, entry->maxLevel)) {
 					// Reset the numInvalidated value lower, we got a match.
 					if (entry->numInvalidated > 8) {
 						--entry->numInvalidated;
 					}
+
+					// Now just use our archived texture, instead of entry.
 					nextTexture_ = secondEntry;
 					return true;
 				}
 			} else {
+				// It wasn't found, so we're about to throw away entry and rebuild a texture.
+				// Let's save this in the secondary cache in case it gets used again.
 				secondKey = entry->fullhash | ((u64)entry->cluthash << 32);
 				secondCacheSizeEstimate_ += EstimateTexMemoryUsage(entry);
-				// Is this wise? We simply copy the entry.
+
+				// If the entry already exists in the secondary texture cache, drop it nicely.
+				auto oldIter = secondCache_.find(secondKey);
+				if (oldIter != secondCache_.end()) {
+					ReleaseTexture(oldIter->second.get(), true);
+				}
+
+				// Archive the entire texture entry as is, since we'll use its params if it is seen again.
+				// We keep parameters on the current entry, since we are STILL building a new texture here.
 				secondCache_[secondKey].reset(new TexCacheEntry(*entry));
+
+				// Make sure we don't delete the texture we just archived.
+				entry->texturePtr = nullptr;
 				doDelete = false;
 			}
 		}
@@ -1498,16 +1521,28 @@ bool TextureCacheCommon::CheckFullHash(TexCacheEntry *entry, bool &doDelete) {
 }
 
 void TextureCacheCommon::Invalidate(u32 addr, int size, GPUInvalidationType type) {
+	// They could invalidate inside the texture, let's just give a bit of leeway.
+	const int LARGEST_TEXTURE_SIZE = 512 * 512 * 4;
+
+	addr &= 0x3FFFFFFF;
+	const u32 addr_end = addr + size;
+
+	if (type == GPU_INVALIDATE_ALL) {
+		// This is an active signal from the game that something in the texture cache may have changed.
+		gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
+	} else {
+		// Do a quick check to see if the current texture is in range.
+		const u32 currentAddr = gstate.getTextureAddress(0);
+		if (addr_end >= currentAddr && addr < currentAddr + LARGEST_TEXTURE_SIZE) {
+			gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
+		}
+	}
+
 	// If we're hashing every use, without backoff, then this isn't needed.
 	if (!g_Config.bTextureBackoffCache) {
 		return;
 	}
 
-	addr &= 0x3FFFFFFF;
-	const u32 addr_end = addr + size;
-
-	// They could invalidate inside the texture, let's just give a bit of leeway.
-	const int LARGEST_TEXTURE_SIZE = 512 * 512 * 4;
 	const u64 startKey = (u64)(addr - LARGEST_TEXTURE_SIZE) << 32;
 	u64 endKey = (u64)(addr + size + LARGEST_TEXTURE_SIZE) << 32;
 	if (endKey < startKey) {

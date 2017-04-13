@@ -19,6 +19,7 @@
 
 #include "base/logging.h"
 #include "Common/Log.h"
+#include "Common/StringUtils.h"
 #include "Core/Reporting.h"
 #include "DepalettizeShaderGLES.h"
 #include "GPU/GLES/TextureCacheGLES.h"
@@ -121,8 +122,8 @@ bool DepalShaderCacheGLES::CreateVertexShader() {
 	return !vertexShaderFailed_;
 }
 
-u32 DepalShaderCacheGLES::GenerateShaderID(GEPaletteFormat clutFormat, GEBufferFormat pixelFormat) {
-	return (gstate.clutformat & 0xFFFFFF) | (pixelFormat << 24);
+u32 DepalShaderCacheGLES::GenerateShaderID(uint32_t clutMode, GEBufferFormat pixelFormat) {
+	return (clutMode & 0xFFFFFF) | (pixelFormat << 24);
 }
 
 GLuint DepalShaderCacheGLES::GetClutTexture(GEPaletteFormat clutFormat, const u32 clutID, u32 *rawClut) {
@@ -137,17 +138,12 @@ GLuint DepalShaderCacheGLES::GetClutTexture(GEPaletteFormat clutFormat, const u3
 	GLuint dstFmt = getClutDestFormat(clutFormat);
 	int texturePixels = clutFormat == GE_CMODE_32BIT_ABGR8888 ? 256 : 512;
 
-	bool useBGRA = UseBGRA8888() && dstFmt == GL_UNSIGNED_BYTE;
-
 	DepalTexture *tex = new DepalTexture();
 	glGenTextures(1, &tex->texture);
 	glBindTexture(GL_TEXTURE_2D, tex->texture);
 	GLuint components = dstFmt == GL_UNSIGNED_SHORT_5_6_5 ? GL_RGB : GL_RGBA;
 
 	GLuint components2 = components;
-	if (useBGRA) {
-		components2 = GL_BGRA_EXT;
-	}
 
 	glTexImage2D(GL_TEXTURE_2D, 0, components, texturePixels, 1, 0, components2, dstFmt, (void *)rawClut);
 
@@ -193,8 +189,8 @@ void DepalShaderCacheGLES::Decimate() {
 	}
 }
 
-DepalShader *DepalShaderCacheGLES::GetDepalettizeShader(GEPaletteFormat clutFormat, GEBufferFormat pixelFormat) {
-	u32 id = GenerateShaderID(clutFormat, pixelFormat);
+DepalShader *DepalShaderCacheGLES::GetDepalettizeShader(uint32_t clutMode, GEBufferFormat pixelFormat) {
+	u32 id = GenerateShaderID(clutMode, pixelFormat);
 
 	auto shader = cache_.find(id);
 	if (shader != cache_.end()) {
@@ -239,6 +235,7 @@ DepalShader *DepalShaderCacheGLES::GetDepalettizeShader(GEPaletteFormat clutForm
 	DepalShader *depal = new DepalShader();
 	depal->program = program;
 	depal->fragShader = fragShader;
+	depal->code = buffer;
 	cache_[id] = depal;
 
 	GLint linkStatus = GL_FALSE;
@@ -270,4 +267,28 @@ DepalShader *DepalShaderCacheGLES::GetDepalettizeShader(GEPaletteFormat clutForm
 
 	delete[] buffer;
 	return depal->program ? depal : nullptr;
+}
+
+std::vector<std::string> DepalShaderCacheGLES::DebugGetShaderIDs(DebugShaderType type) {
+	std::vector<std::string> ids;
+	for (auto &iter : cache_) {
+		ids.push_back(StringFromFormat("%08x", iter.first));
+	}
+	return ids;
+}
+
+std::string DepalShaderCacheGLES::DebugGetShaderString(std::string idstr, DebugShaderType type, DebugShaderStringType stringType) {
+	uint32_t id;
+	sscanf(idstr.c_str(), "%08x", &id);
+	auto iter = cache_.find(id);
+	if (iter == cache_.end())
+		return "";
+	switch (stringType) {
+	case SHADER_STRING_SHORT_DESC:
+		return idstr;
+	case SHADER_STRING_SOURCE_CODE:
+		return iter->second->code;
+	default:
+		return "";
+	}
 }

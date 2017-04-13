@@ -128,9 +128,11 @@ PPSSPP_UWPMain::PPSSPP_UWPMain(App ^app, const std::shared_ptr<DX::DeviceResourc
 	int height = m_deviceResources->GetScreenViewport().Height;
 
 	ctx_->GetDrawContext()->HandleEvent(Draw::Event::GOT_BACKBUFFER, width, height, m_deviceResources->GetBackBufferRenderTargetView());
+	InputDevice::BeginPolling();
 }
 
 PPSSPP_UWPMain::~PPSSPP_UWPMain() {
+	InputDevice::StopPolling();
 	ctx_->GetDrawContext()->HandleEvent(Draw::Event::LOST_BACKBUFFER, 0, 0, nullptr);
 	NativeShutdownGraphics();
 	NativeShutdown();
@@ -368,6 +370,12 @@ int System_GetPropertyInt(SystemProperty prop) {
 		return 1;
 	case SYSPROP_HAS_FILE_BROWSER:
 		return 1;
+	case SYSPROP_APP_GOLD:
+#ifdef GOLD
+		return 1;
+#else
+		return 0;
+#endif
 	default:
 		return -1;
 	}

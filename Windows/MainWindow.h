@@ -16,6 +16,7 @@ namespace MainWindow
 	enum {
 		WM_USER_SAVESTATE_FINISH = WM_USER + 100,
 		WM_USER_UPDATE_UI = WM_USER + 101,
+		WM_USER_BROWSE_BG_DONE = WM_USER + 102,
 		WM_USER_WINDOW_TITLE_CHANGED = WM_USER + 103,
 		WM_USER_BROWSE_BOOT_DONE = WM_USER + 104,
 		WM_USER_TOGGLE_FULLSCREEN = WM_USER + 105,
@@ -59,7 +60,7 @@ namespace MainWindow
 	void CreateDebugWindows();
 	void DestroyDebugWindows();
 	void Close();
-	void UpdateMenus();
+	void UpdateMenus(bool isMenuSelect = false);
 	void UpdateCommands();
 	void SetWindowTitle(const wchar_t *title);
 	void Redraw();
